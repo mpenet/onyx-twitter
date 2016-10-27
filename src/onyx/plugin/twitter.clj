@@ -12,9 +12,9 @@
               FilterQuery)
    (twitter4j.conf Configuration ConfigurationBuilder)))
 
-(defn config-with-password ^Configuration [consumer-key consumer-secret
-                                           access-token access-secret]
-  "Build a twitter4j configuration object with a username/password pair"
+(defn build-config
+  [consumer-key consumer-secret
+   access-token access-secret]
   (.build (doto  (ConfigurationBuilder.)
             (.setDebugEnabled true)
             (.setOAuthConsumerKey consumer-key)
@@ -22,25 +22,22 @@
             (.setOAuthAccessToken access-token)
             (.setOAuthAccessTokenSecret access-secret))))
 
-(defn status-listener
+(defn raw-stream-listener
   "Implementation of twitter4j's StatusListener interface"
-  [cb]
+  [on-message on-error]
   (reify RawStreamListener
     (onMessage [this raw-message]
-      (some-> raw-message (json/parse-string true) cb))
+      (some-> raw-message (json/parse-string true) on-message))
     (onException [this e]
-      (log/error e))))
+      (on-error e))))
 
 (defn get-twitter-stream ^TwitterStream [config]
   (-> (TwitterStreamFactory. ^Configuration config) .getInstance))
 
-(defn add-stream-callback! [stream cb]
-  (let [tc (chan 1000)]
-    (.addListener (cast TwitterStream stream)
-                  (status-listener cb))
-    ;; todo listen to endpoint from conf, sample is fun, but useless
-    ;; in practice
-    (.sample stream)))
+(defn add-listener! [stream on-message on-error]
+  (doto (cast TwitterStream stream)
+    (.addListener
+     (raw-stream-listener on-message on-error))))
 
 (defn set-stream-filters
   [^TwitterStream stream params]
@@ -67,15 +64,19 @@
                   twitter/access-token
                   twitter/access-secret
                   twitter/keep-keys]} (:task-map this)
-          configuration (config-with-password consumer-key consumer-secret
-                                              access-token access-secret)
+          configuration (build-config consumer-key
+                                      consumer-secret
+                                      access-token
+                                      access-secret)
           twitter-stream (get-twitter-stream configuration)
           twitter-feed-ch (chan 1000)]
       (assert consumer-key ":twitter/consumer-key not specified")
       (assert consumer-secret ":twitter/consumer-secret not specified")
       (assert access-token ":twitter/access-token not specified")
       (assert access-secret ":twitter/access-secret not specified")
-      (add-stream-callback! twitter-stream (fn [m] (>!! twitter-feed-ch m)))
+      (add-listener! twitter-stream
+                     (fn [m] (>!! twitter-feed-ch m))
+                     #(log/error %))
       (assoc this
              :twitter-stream twitter-stream
              :twitter-feed-ch twitter-feed-ch)))
