@@ -1,7 +1,9 @@
 (ns onyx.plugin.twitter
   (:require
    [clojure.tools.logging :as log]
-   [clojure.core.async :refer [<!! >!! chan close!]]
+   [clojure.core.async
+    :refer [<!! >!! chan close! go]
+    :as async]
    [clojure.java.data :refer [from-java]]
    [cheshire.core :as json]
    [onyx.plugin simple-input
@@ -13,17 +15,16 @@
    (twitter4j.conf Configuration ConfigurationBuilder)))
 
 (defn build-config
-  [consumer-key consumer-secret
-   access-token access-secret]
-  (.build (doto  (ConfigurationBuilder.)
-            (.setDebugEnabled true)
-            (.setOAuthConsumerKey consumer-key)
-            (.setOAuthConsumerSecret consumer-secret)
-            (.setOAuthAccessToken access-token)
-            (.setOAuthAccessTokenSecret access-secret))))
+  [consumer-key consumer-secret access-token access-secret]
+  (-> (doto (ConfigurationBuilder.)
+        (.setDebugEnabled true)
+        (.setOAuthConsumerKey consumer-key)
+        (.setOAuthConsumerSecret consumer-secret)
+        (.setOAuthAccessToken access-token)
+        (.setOAuthAccessTokenSecret access-secret))
+      .build))
 
 (defn raw-stream-listener
-  "Implementation of twitter4j's StatusListener interface"
   [on-message on-error]
   (reify RawStreamListener
     (onMessage [this raw-message]
@@ -31,13 +32,14 @@
     (onException [this e]
       (on-error e))))
 
-(defn get-twitter-stream ^TwitterStream [config]
+(defn ^TwitterStream get-stream [config]
   (-> (TwitterStreamFactory. ^Configuration config) .getInstance))
 
-(defn add-listener! [stream on-message on-error]
-  (doto (cast TwitterStream stream)
-    (.addListener
-     (raw-stream-listener on-message on-error))))
+(defn add-listener! [^TwitterStream stream
+                     on-message
+                     on-error]
+  (doto stream
+    (.addListener (raw-stream-listener on-message on-error))))
 
 (defn set-stream-filters
   [^TwitterStream stream params]
@@ -56,7 +58,37 @@
        ;; add languages and other params
        fq))))
 
-(defrecord ConsumeTweets [event task-map segment]
+(defmulti handle-signal (fn [stream t & _] t))
+
+(defmethod handle-signal ::sample
+  [^TwitterStream stream & _]
+  (.sample stream))
+
+(defmethod handle-signal ::filters
+  [^TwitterStream stream _ params]
+  (set-stream-filters stream params))
+
+(defmethod handle-signal ::stop
+  [^TwitterStream stream & _]
+  (.shutdown stream)
+  (.cleanUp  stream))
+
+(defn start-stream-signal-handler!
+  "Take a c.async channel and a stream instance that can receive
+  signals that will control changes to apply to the current stream (ex
+  start/stop/change/config. A signal is a par of signal-id and
+  arguments"
+  [^TwitterStream stream signal-ch]
+  (async/go-loop []
+    (when-let [signal (async/<! signal-ch)]
+      (handle-signal signal)
+      (recur))))
+
+(defrecord ConsumeTweets [event task-map segment
+                          signal-ch
+                          ;; locals
+                          feed-ch
+                          ^TwitterStream stream]
   onyx.plugin.simple-input/SimpleInput
   (start [this]
     (let [{:keys [twitter/consumer-key
@@ -68,44 +100,46 @@
                                       consumer-secret
                                       access-token
                                       access-secret)
-          twitter-stream (get-twitter-stream configuration)
-          twitter-feed-ch (chan 1000)]
+          stream (get-stream configuration)
+          feed-ch (chan 1000)]
       (assert consumer-key ":twitter/consumer-key not specified")
       (assert consumer-secret ":twitter/consumer-secret not specified")
       (assert access-token ":twitter/access-token not specified")
       (assert access-secret ":twitter/access-secret not specified")
-      (add-listener! twitter-stream
-                     (fn [m] (>!! twitter-feed-ch m))
-                     #(log/error %))
+
+      (add-listener! stream
+                     (fn [m] (>!! feed-ch m))
+                     #(log/error "Unhandled t4j RawStreamListener Handler error - " %))
+      (start-stream-signal-handler! stream signal-ch)
       (assoc this
-             :twitter-stream twitter-stream
-             :twitter-feed-ch twitter-feed-ch)))
-  (stop [{:keys [twitter-stream twitter-feed-ch]}]
-    (do (close! twitter-feed-ch)
-        (.shutdown ^TwitterStream twitter-stream)
-        (.cleanUp  ^TwitterStream twitter-stream)))
+             :stream stream
+             :feed-ch feed-ch
+             :signal-ch signal-ch)))
+  (stop [this]
+    (close! feed-ch)
+    (async/>! signal-ch ::stop)
+    (close! signal-ch))
   (checkpoint [this]
     -1)
   (segment-id[this]
     -1)
   (segment [this]
     segment)
-  (next-state [{:keys [twitter-feed-ch task-map] :as this}]
-    (let [keep-keys (get task-map :twitter/keep-keys)]
-      (assoc this :segment (if (= :all keep-keys)
-                             (<!! twitter-feed-ch)
-                             (select-keys
-                              (<!! twitter-feed-ch)
-                              (or keep-keys [:id :text :lang]))))))
-  (recover [this offset]
-    this)
-  (checkpoint-ack [this offset]
-    this)
+  (next-state [this]
+    (let [keep-keys (:twitter/keep-keys task-map)]
+      (assoc this :segment (if (= :all (:twitter/keep-keys task-map))
+                             (<!! feed-ch)
+                             (-> (<!! feed-ch)
+                                 (select-keys (or keep-keys [:id :text :lang])))))))
+  (recover [this offset] this)
+  (checkpoint-ack [this offset] this)
   (segment-complete! [this segment]))
 
 (defn consume-tweets [{:keys [onyx.core/task-map] :as event}]
-  (map->ConsumeTweets {:event event
-                       :task-map task-map}))
+  (map->ConsumeTweets
+   {:event event
+    :task-map task-map
+    :signal-ch (chan)}))
 
 (def twitter-reader-calls
   {:lifecycle/before-task-start

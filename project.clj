@@ -21,6 +21,7 @@
                  [org.clojure/java.data "0.1.1"]
                  [cheshire "5.6.3"] ]
   :profiles {:dev {:dependencies []
+                   :global-vars {*warn-on-reflection* true}
                    :plugins [[lein-set-version "0.4.1"]
                              [lein-update-dependency "0.1.2"]
                              [lein-pprint "1.1.1"]]
