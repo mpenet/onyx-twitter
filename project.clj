@@ -12,12 +12,14 @@
                              :password :env
                              :sign-releases false}}
   :dependencies [[org.clojure/clojure "1.7.0"]
+                 [org.clojure/tools.logging "0.3.1"]
                  [org.onyxplatform/onyx "0.9.11"]
                  [org.twitter4j/twitter4j-core "4.0.4"]
                  [org.twitter4j/twitter4j-stream "4.0.4"]
                  [org.clojure/core.async "0.2.374"]
                  [aero "1.0.0-beta2"]
-                 [org.clojure/java.data "0.1.1"]]
+                 [org.clojure/java.data "0.1.1"]
+                 [cheshire "5.6.3"] ]
   :profiles {:dev {:dependencies []
                    :plugins [[lein-set-version "0.4.1"]
                              [lein-update-dependency "0.1.2"]
