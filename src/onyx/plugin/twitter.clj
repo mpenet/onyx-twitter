@@ -34,7 +34,7 @@
 (defn get-twitter-stream ^TwitterStream [config]
   (-> (TwitterStreamFactory. ^Configuration config) .getInstance))
 
-(defn add-stream-callback! [^TwitterStream stream cb]
+(defn add-stream-callback! [stream cb]
   (let [tc (chan 1000)]
     (.addListener (cast TwitterStream stream)
                   (status-listener cb))
