@@ -25,7 +25,11 @@
       :twitter/keep-keys
       {:doc "Keys to keep in the tweet map after deconstructing the POJO tweet. Defaults to `[:id :lang :text]`. `:all` will keep all the tweet's keys."
        :default [:id :lang :text]
-       :type :vector}}}}
+       :type :vector}
+
+      :twitter/filters
+      {:doc "A map of filter parameters to be passed to Twitter API"
+       :type :map}}}}
 
    :lifecycle-entry
    {:onyx.plugin.twitter/consume-tweets
@@ -39,4 +43,5 @@
      :twitter/consumer-secret
      :twitter/access-token
      :twitter/access-secret
-     :twitter/keep-keys]}})
+     :twitter/keep-keys
+     :twitter/filters]}})
