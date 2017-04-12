@@ -8,19 +8,18 @@
    :twitter/access-token s/Str
    :twitter/access-secret s/Str
    (s/optional-key :twitter/keep-keys) (s/either s/Keyword [s/Any])
-   (s/optional-key :twitter/filters) {(s/optional-key :track) [String]
-                                      (s/optional-key :follow) [Long]
-                                      (s/optional-key :filter-level) String
-                                      (s/optional-key :language) [String]
-                                      (s/optional-key :locatons) [[Double]]}
+   (s/optional-key :twitter/track) [s/Str]
+   (s/optional-key :follow) [Long]
+   (s/optional-key :filter-level) s/Str
+   (s/optional-key :language) [s/Str]
+   (s/optional-key :locatons) [[Double]]
    (os/restricted-ns :twitter) s/Any})
 
 (s/defn stream
   ([task-name :- s/Keyword opts]
    {:task {:task-map (merge
                       {:onyx/name task-name
-                       :onyx/plugin :onyx.plugin.buffered-reader/new-buffered-input
-                       :simple-input/build-input :onyx.plugin.twitter/consume-tweets
+                       :onyx/plugin :onyx.plugin.twitter/consume-tweets
                        :onyx/type :input
                        :onyx/max-peers 1
                        :onyx/medium :twitter}
